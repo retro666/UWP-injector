@@ -22,7 +22,7 @@ There is an example file in the project
 > example.txt:
 > ```
 > Microsoft.WindowsCalculator_8wekyb3d8bbwe!App
-> C:\Program Files\WindowsApps\Microsoft.WindowsCalculator_11.2405.2.0_x64__8wekyb3d8bbwe\CalcViewModel.dll
+> module C:\Program Files\WindowsApps\Microsoft.WindowsCalculator_11.2405.2.0_x64__8wekyb3d8bbwe\CalcViewModel.dll
 > replace 8B 41 28 C3 with B8 83 00 00 00 C3
 > ```
 The first line indicates the UWP App ID.
