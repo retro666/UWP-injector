@@ -131,23 +131,23 @@ int main(int argc, char** argv) {
     struct _stat ruleFileStat;
     _fstat((int)ruleFile, &ruleFileStat);
     char* ruleBuf = new char[ruleFileStat.st_size << 2];
-    wchar_t* publicBuf = (wchar_t*)(ruleBuf + ruleFileStat.st_size);
+    wchar_t* publicBuf = (wchar_t*)(ruleBuf + ruleFileStat.st_size) + 1;
     _read(ruleFile, ruleBuf, ruleFileStat.st_size);
     _close(ruleFile);
+    (short&)(ruleBuf[ruleFileStat.st_size]) = 0;
     char* src = ruleBuf;
     wchar_t* dst = publicBuf;
     int line = 1;
-    do {
+    while (true) {
         char a = src++[0];
         if (a < 0x20) {
-            --ruleFileStat.st_size;
             if (a == 10) {
                 ++line;
             }
             break;
         }
         dst++[0] = a;
-    } while (--ruleFileStat.st_size);
+    }
     dst[0] = 0;
     DWORD PID;
     if (ppv->ActivateApplication((LPCWSTR)publicBuf, 0, AO_NONE, &PID)) {
@@ -161,221 +161,230 @@ int main(int argc, char** argv) {
     K32EnumProcessModules(PH, (HMODULE*)&PM, 8, &cbNeeded);
     PM = (size_t*)new char[cbNeeded];
     K32EnumProcessModules(PH, (HMODULE*)PM, cbNeeded, &cbNeeded);
-    do {
-        char a = src++[0];
-        if (a < 0x20) {
-            if (a == 10) {
-                ++line;
-            }
-        }
-        else {
-            dst++[0] = a;
-            break;
-        }
-    } while (--ruleFileStat.st_size);
-    char* moduleNameA = src - 1;
-    wchar_t* moduleName = dst - 1;
-    do {
-        char a = src++[0];
-        if (a < 0x20) {
-            --ruleFileStat.st_size;
-            if (a == 10) {
-                ++line;
-            }
-            dst++[0] = 0;
-            break;
-        }
-        dst++[0] = a;
-    } while (--ruleFileStat.st_size);
-    src[-1] = 0;
-    size_t* PDump = (size_t*)new wchar_t[580];
-    do {
-        GetModuleFileNameEx(PH, (HMODULE&)(((char*)PM)[cbNeeded -= 8]), (LPWSTR)PDump, 580);
-        if (!lstrcmpW((LPCWSTR)PDump, moduleName)) {
-            goto FOUND;
-        }
-    } while (cbNeeded);
-    printf("%s: Line 2: ERROR: %s: Module not found\n", ruleFileName, moduleNameA);
-    return 1;
-FOUND:
-    PM = (size_t*&)(((char*)PM)[cbNeeded]);
+    size_t* MName = (size_t*)alloca(1160);
+    size_t* PDump = 0;
     MEMORY_BASIC_INFORMATION PMBI;
-    VirtualQueryEx(PH, (LPCVOID)((size_t)PM | 0x1000), &PMBI, sizeof(MEMORY_BASIC_INFORMATION));
-    PDump = (size_t*)VirtualAlloc(0, PMBI.RegionSize, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-    size_t NumberOfBytesReaded;
-    ReadProcessMemory(PH, PMBI.BaseAddress, PDump, PMBI.RegionSize, &NumberOfBytesReaded);
-    if (!--ruleFileStat.st_size) {
-        printf("%s: WARNING: Replace rules not found\n", ruleFileName);
+    unsigned char a = src++[0];
+    if (!a) {
         return 0;
     }
     do {
-        unsigned char a = src++[0];
         if (a > ' ') {
             char* command = src - 1;
             while (true) {
-                if (!--ruleFileStat.st_size) {
-                    src[0] = 0;
-                    printf(strcmp(command, "replace") ? "%s: Line %d: ERROR: Unknown rule %s\n" : "%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line, command);
-                    return 1;
+                a = src++[0];
+                if (!a) {
+                    switch (command[0])
+                    {
+                    case 'm':
+                        printf(strcmp(command + 1, "odule") ? "%s: Line %d: ERROR: Unknown rule %s\n" : "%s: Line %d: ERROR: Syntax error in rule 'module'\n", ruleFileName, line, command);
+                        return 1;
+                    case 'r':
+                        printf(strcmp(command + 1, "eplace") ? "%s: Line %d: ERROR: Unknown rule %s\n" : "%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line, command);
+                        return 1;
+                    default:
+                        printf("%s: Line %d: ERROR: Unknown rule %s\n", ruleFileName, line, command);
+                        return 1;
+                    }
                 }
-                if ((a = src++[0]) > ' ') {
+                if (a > ' ') {
                     src[-1] |= 0x20;
                 }
                 else if (a < ' ') {
                     src[-1] = 0;
-                    printf(strcmp(command, "replace") ? "%s: Line %d: ERROR: Unknown rule %s\n" : "%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line, command);
-                    return 1;
+                    switch (command[0])
+                    {
+                    case 'm':
+                        printf(strcmp(command + 1, "odule") ? "%s: Line %d: ERROR: Unknown rule %s\n" : "%s: Line %d: ERROR: Syntax error in rule 'module'\n", ruleFileName, line, command);
+                        return 1;
+                    case 'r':
+                        printf(strcmp(command + 1, "eplace") ? "%s: Line %d: ERROR: Unknown rule %s\n" : "%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line, command);
+                        return 1;
+                    default:
+                        printf("%s: Line %d: ERROR: Unknown rule %s\n", ruleFileName, line, command);
+                        return 1;
+                    }
                 }
                 else {
                     src[-1] = 0;
                     break;
                 }
             }
-            if (strcmp(command, "replace")) {
-                printf("%s: Line %d: ERROR: Unknown rule %s\n", ruleFileName, line, command);
-                return 1;
-            }
-            char* arg1 = (char*)publicBuf, * arg2;
-            char* arg1mask = ruleBuf + (ruleFileStat.st_size << 1);
-            char* arg2mask;
-            int arg1size = 0;
-            int arg2size = 0;
-            arg1mask[0] = 0xFF;
-            while (true) {
-                if (!--ruleFileStat.st_size) {
-                    printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
+            switch (command[0])
+            {
+            case 'm': {
+                if (strcmp(command + 1, "odule")) {
+                    printf("%s: Line %d: ERROR: Unknown rule %s\n", ruleFileName, line, command);
                     return 1;
                 }
-                if ((a = src++[0]) <= ' ') {
-                    if (a == 10) {
-                        printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
-                        return 1;
-                    }
+                if (PDump) {
+                    delete[] PDump;
                 }
-                else {
-                    a &= 0xDF;
-                    if (a & 0xC0) {
-                        if (a == 'W') {
-                            break;
-                        }
-                        if (a > 'F') {
-                            printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
-                            return 1;
-                        }
-                        a ^= 0x40;
-                    }
-                    a = text2hex[a];
-                    if (a > 16) {
-                        arg1mask[arg1size] &= 0x0F;
-                    }
-                    else if (a == 16) {
-                        printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
-                        return 1;
-                    }
-                    else {
-                        arg1[arg1size] = a << 4;
-                    }
-                    if (!--ruleFileStat.st_size) {
-                        printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
-                        return 1;
-                    }
-                    if ((a = src++[0]) <= ' ') {
+                while (true) {
+                    char a = src++[0];
+                    if (a < 0x20) {
                         if (a == 10) {
-                            printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
-                            return 1;
+                            ++line;
                         }
                     }
                     else {
-                        a &= 0xDF;
-                        if (a & 0xC0) {
-                            if (a > 'F') {
-                                printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
-                                return 1;
-                            }
-                            a ^= 0x40;
-                        }
-                        a = text2hex[a];
-                        if (a > 16) {
-                            arg1mask[arg1size] &= 0xF0;
-                        }
-                        else if (a == 16) {
-                            printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
-                            return 1;
-                        }
-                        else {
-                            arg1[arg1size] |= a;
-                        }
-                        if (!ruleFileStat.st_size) {
-                            printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
-                            return 1;
-                        }
-                        arg1mask[++arg1size] = 0xFF;
-                    }
-                }
-            }
-            if (!arg1size) {
-                printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
-                return 1;
-            }
-            if (arg1size & 7) {
-                memset(arg1mask + arg1size, 0, 8 - (arg1size & 7));
-                arg1size += 8 - (arg1size & 7);
-            }
-            arg2 = src - 1;
-            arg2mask = arg1mask + arg1size;
-            arg2mask[0] = 0xFF;
-            while (--ruleFileStat.st_size) {
-                if ((a = src++[0]) <= ' ') {
-                    if (a == 10) {
-                        printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
-                        return 1;
-                    }
-                    src[-1] = 0;
-                    break;
-                }
-            }
-            if (strcmp(arg2, "with")) {
-                printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
-                return 1;
-            }
-            arg2 = arg1 + arg1size;
-            while (true) {
-                if (!--ruleFileStat.st_size) {
-                    break;
-                }
-                if ((a = src++[0]) <= ' ') {
-                    if (a == 10) {
+                        dst++[0] = a;
                         break;
                     }
                 }
-                else {
-                    a &= 0xDF;
-                    if (a & 0xC0) {
-                        if (a > 'F') {
+                char* moduleNameA = src - 1;
+                wchar_t* moduleName = dst - 1;
+                while (true) {
+                    char a = src++[0];
+                    if (a < 0x20) {
+                        if (a == 10) {
+                            ++line;
+                        }
+                        dst++[0] = 0;
+                        break;
+                    }
+                    dst++[0] = a;
+                }
+                src[-1] = 0;
+                do {
+                    GetModuleFileNameEx(PH, (HMODULE&)(((char*)PM)[cbNeeded -= 8]), (LPWSTR)MName, 580);
+                    if (!lstrcmpW((LPCWSTR)MName, moduleName)) {
+                        goto FOUND;
+                    }
+                } while (cbNeeded);
+                printf("%s: Line 2: ERROR: %s: Module not found\n", ruleFileName, moduleNameA);
+                return 1;
+            FOUND:
+                PM = (size_t*&)(((char*)PM)[cbNeeded]);
+                VirtualQueryEx(PH, (LPCVOID)((size_t)PM | 0x1000), &PMBI, sizeof(MEMORY_BASIC_INFORMATION));
+                PDump = (size_t*)new char[PMBI.RegionSize];
+                size_t NumberOfBytesReaded;
+                ReadProcessMemory(PH, PMBI.BaseAddress, PDump, PMBI.RegionSize, &NumberOfBytesReaded);
+            }
+                    break;
+            case 'r': {
+                if (strcmp(command + 1, "eplace")) {
+                    printf("%s: Line %d: ERROR: Unknown rule %s\n", ruleFileName, line, command);
+                    return 1;
+                }
+                if (!PDump) {
+                    printf("%s: Line %d: ERROR: No module loaded for %s\n", ruleFileName, line, command);
+                    return 1;
+                }
+                char* arg1 = (char*)publicBuf + 1, * arg2;
+                char* arg1mask = ruleBuf + (ruleFileStat.st_size << 1);
+                char* arg2mask;
+                int arg1size = 0;
+                int arg2size = 0;
+                arg1mask[0] = 0xFF;
+                while (true) {
+                    a = src++[0];
+                    if (!a) {
+                        printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
+                        return 1;
+                    }
+                    if (a <= ' ') {
+                        if (a == 10) {
                             printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
                             return 1;
                         }
-                        a ^= 0x40;
-                    }
-                    a = text2hex[a];
-                    if (a > 16) {
-                        arg2mask[arg2size] &= 0x0F;
-                    }
-                    else if (a == 16) {
-                        printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
-                        return 1;
                     }
                     else {
-                        arg2[arg2size] = a << 4;
+                        a &= 0xDF;
+                        if (a & 0xC0) {
+                            if (a == 'W') {
+                                break;
+                            }
+                            if (a > 'F') {
+                                printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
+                                return 1;
+                            }
+                            a ^= 0x40;
+                        }
+                        a = text2hex[a];
+                        if (a > 16) {
+                            arg1mask[arg1size] &= 0x0F;
+                        }
+                        else if (a == 16) {
+                            printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
+                            return 1;
+                        }
+                        else {
+                            arg1[arg1size] = a << 4;
+                        }
+                        a = src++[0];
+                        if (!a) {
+                            printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
+                            return 1;
+                        }
+                        if (a <= ' ') {
+                            if (a == 10) {
+                                printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
+                                return 1;
+                            }
+                        }
+                        else {
+                            a &= 0xDF;
+                            if (a & 0xC0) {
+                                if (a > 'F') {
+                                    printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
+                                    return 1;
+                                }
+                                a ^= 0x40;
+                            }
+                            a = text2hex[a];
+                            if (a > 16) {
+                                arg1mask[arg1size] &= 0xF0;
+                            }
+                            else if (a == 16) {
+                                printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
+                                return 1;
+                            }
+                            else {
+                                arg1[arg1size] |= a;
+                            }
+                            if (!a) {
+                                printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
+                                return 1;
+                            }
+                            arg1mask[++arg1size] = 0xFF;
+                        }
                     }
-                    if (!--ruleFileStat.st_size) {
-                        printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
-                        return 1;
-                    }
+                }
+                if (!arg1size) {
+                    printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
+                    return 1;
+                }
+                if (arg1size & 7) {
+                    memset(arg1mask + arg1size, 0, 8 - (arg1size & 7));
+                    arg1size += 8 - (arg1size & 7);
+                }
+                arg2 = src - 1;
+                arg2mask = arg1mask + arg1size;
+                arg2mask[0] = 0xFF;
+                while (a) {
                     if ((a = src++[0]) <= ' ') {
                         if (a == 10) {
                             printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
                             return 1;
+                        }
+                        src[-1] = 0;
+                        break;
+                    }
+                }
+                if (strcmp(arg2, "with")) {
+                    printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
+                    return 1;
+                }
+                arg2 = arg1 + arg1size;
+                while (true) {
+                    a = src++[0];
+                    if (!a) {
+                        break;
+                    }
+                    if (a <= ' ') {
+                        if (a == 10) {
+                            break;
                         }
                     }
                     else {
@@ -389,65 +398,103 @@ FOUND:
                         }
                         a = text2hex[a];
                         if (a > 16) {
-                            arg2mask[arg2size] &= 0xF0;
+                            arg2mask[arg2size] &= 0x0F;
                         }
                         else if (a == 16) {
                             printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
                             return 1;
                         }
                         else {
-                            arg2[arg2size] |= a;
+                            arg2[arg2size] = a << 4;
                         }
-                        if (!ruleFileStat.st_size) {
+                        a = src++[0];
+                        if (!a) {
                             printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
                             return 1;
                         }
-                        arg2mask[++arg2size] = 0xFF;
-                    }
-                }
-            }
-            if (!arg2size) {
-                printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
-                return 1;
-
-            }
-            if (arg2size & 7) {
-                memset(arg2mask + arg2size, 0, 8 - (arg2size & 7));
-                arg2size += 8 - (arg2size & 7);
-            }
-            char* i = (char*)PDump + PMBI.RegionSize - arg1size;
-            size_t searchingMask = ((size_t*)arg1mask)[0];
-            size_t searching = _pext_u64(((size_t*)arg1)[0], searchingMask);
-            if (i < (char*)PDump) {
-                printf("%s: Line %d: WARNING: Find data size greater than .text segment size\n", ruleFileName, line);
-                continue;
-            }
-            int execCnt = 0;
-            do {
-                if (_pext_u64((size_t&)(i[0]), searchingMask) == searching) {
-                    int j = 8;
-                    while (j < arg1size) {
-                        if (_pext_u64((size_t&)(i[j]), (size_t&)(arg1mask[j])) != searching) {
-                            goto TRY_NEXT;
+                        if (a <= ' ') {
+                            if (a == 10) {
+                                printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
+                                return 1;
+                            }
                         }
-                        j += 8;
+                        else {
+                            a &= 0xDF;
+                            if (a & 0xC0) {
+                                if (a > 'F') {
+                                    printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
+                                    return 1;
+                                }
+                                a ^= 0x40;
+                            }
+                            a = text2hex[a];
+                            if (a > 16) {
+                                arg2mask[arg2size] &= 0xF0;
+                            }
+                            else if (a == 16) {
+                                printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
+                                return 1;
+                            }
+                            else {
+                                arg2[arg2size] |= a;
+                            }
+                            arg2mask[++arg2size] = 0xFF;
+                        }
                     }
-                    j = 0;
-                    ++execCnt;
-                    while (j < arg2size) {
-                        (size_t&)(i[j]) = _andn_u64((size_t&)(arg2mask[j]), (size_t&)(i[j])) | _pdep_u64((size_t&)(arg2[j]), (size_t&)(arg2mask[j]));
-                        j += 8;
-                    }
-                    size_t lpNumberOfBytesWritten;
-                    WriteProcessMemory(PH, (LPVOID)((size_t)i - (size_t)PDump + (size_t)PMBI.BaseAddress), i, arg2size, &lpNumberOfBytesWritten);
-                TRY_NEXT:;
                 }
-            } while (--i >= (char*)PDump);
-            printf("%s: Line %d: NOTE: Replaced %d items\n", ruleFileName, line, execCnt);
+                if (!arg2size) {
+                    printf("%s: Line %d: ERROR: Syntax error in rule 'replace'\n", ruleFileName, line);
+                    return 1;
+
+                }
+                if (arg2size & 7) {
+                    memset(arg2mask + arg2size, 0, 8 - (arg2size & 7));
+                    arg2size += 8 - (arg2size & 7);
+                }
+                char* i = (char*)PDump + PMBI.RegionSize - arg1size;
+                size_t searchingMask = ((size_t*)arg1mask)[0];
+                size_t searching = _pext_u64(((size_t*)arg1)[0], searchingMask);
+                if (i < (char*)PDump) {
+                    printf("%s: Line %d: WARNING: Find data size greater than .text segment size\n", ruleFileName, line);
+                    continue;
+                }
+                int execCnt = 0;
+                do {
+                    if (i == (char*)PDump + 0x147912) {
+                        i = i;
+                    }
+                    if (_pext_u64((size_t&)(i[0]), searchingMask) == searching) {
+                        int j = 8;
+                        while (j < arg1size) {
+                            if (_pext_u64((size_t&)(i[j]), (size_t&)(arg1mask[j])) != _pext_u64(((size_t&)arg1[j]), ((size_t&)arg1mask[j]))) {
+                                goto TRY_NEXT;
+                            }
+                            j += 8;
+                        }
+                        j = 0;
+                        ++execCnt;
+                        while (j < arg2size) {
+                            (size_t&)(i[j]) = _andn_u64((size_t&)(arg2mask[j]), (size_t&)(i[j])) | _pdep_u64((size_t&)(arg2[j]), (size_t&)(arg2mask[j]));
+                            j += 8;
+                        }
+                        size_t lpNumberOfBytesWritten;
+                        WriteProcessMemory(PH, (LPVOID)((size_t)i - (size_t)PDump + (size_t)PMBI.BaseAddress), i, arg2size, &lpNumberOfBytesWritten);
+                    TRY_NEXT:;
+                    }
+                } while (--i >= (char*)PDump);
+                printf("%s: Line %d: NOTE: Replaced %d items\n", ruleFileName, line, execCnt);
+            }
+                    break;
+
+            default:
+                printf("%s: Line %d: ERROR: Unknown rule %s\n", ruleFileName, line, command);
+                return 1;
+            }
         }
         else if (a == 10) {
             ++line;
         }
-    } while (--ruleFileStat.st_size >= 0);
+        a = src++[0];
+    } while (a);
     return 0;
 }
